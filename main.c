@@ -4,7 +4,6 @@
  * 
  */
 
-
 #include "pico/stdlib.h"
 #include <stdio.h>
 #include "pico/time.h"
@@ -14,10 +13,18 @@
 
 #include "table.h"
 
+// Setup
+/***************************************************/
+
 uint8_t dPWMUsed[] = {10,11,12,13,14,15,16,17,18,19,20,21};
 
-#define STEP_DURATION 4000
-#define OFFSET 500
+#define RANDOMSPARKS        false
+enum BrightnessType Brightness = LINEAR;
+
+#define STEP_DURATION_US    6000
+#define OFFSET_DELAY        500
+
+/***************************************************/
 
 // theMax = power of 2, 2^11 = 2048
 uint16_t get_random_16bits(uint8_t theMax) 
@@ -27,10 +34,42 @@ uint16_t get_random_16bits(uint8_t theMax)
     {
         myValue <<= 1;
         myValue += rosc_hw->randombit;
-    }
-    // offset, 500 = 2s
-    myValue += OFFSET;
+    }        
     return myValue;
+}
+
+void setup_initial_values(uint8_t PWMnum)
+{
+    dPWMdelay[PWMnum] = get_random_16bits(11) + OFFSET_DELAY;
+    if (Brightness == RANDOM)  
+    {
+        dPWMbrightnessCoef[PWMnum] = get_random_16bits(8);    
+    }
+
+#ifdef RANDOMSPARKS    
+    dPWMWaveArray[PWMnum] = get_random_16bits(2);                         // 0 to 3
+    switch(dPWMWaveArray[PWMnum])
+    {
+        case 0:
+            pPWMarray[PWMnum] = byte_array_dec0;                    
+            break;
+        case 1:
+            pPWMarray[PWMnum] = byte_array_dec1;
+            break;
+        case 2:
+            pPWMarray[PWMnum] = byte_array_dec2;
+            break;
+        case 3:
+            pPWMarray[PWMnum] = byte_array_dec3;
+            break;
+        default:
+            pPWMarray[PWMnum] = byte_array_dec1;
+            break;
+    }
+#else
+    pPWMarray[PWMnum] = byte_array_dec1;
+#endif
+    pwm_set_gpio_level(PWMnum, 0);                                            // Take no risks
 }
 
 void setPWM(uint8_t PWMnum)
@@ -43,41 +82,39 @@ void setPWM(uint8_t PWMnum)
 
     // Else we start the wave and find a random number 
     else
-    {
-        if(bPWMphase[PWMnum])
+    {        
+        uint8_t dPWMArrayValue;
+        dPWMArrayValue = *(pPWMarray[PWMnum] + dPWMidx[PWMnum]);    
+
+        uint16_t dFinalValue;
+        switch (Brightness)
         {
-            pwm_set_gpio_level(PWMnum, (uint16_t)(byte_array_dec[dPWMidx[PWMnum]] * 255));                
-            if(++dPWMidx[PWMnum] == sizeof(byte_array_dec))
-            {
-                dPWMidx[PWMnum] = 0;
-                bPWMphase[PWMnum] = false;                
-            }                
+            case RANDOM:
+                dFinalValue = (uint16_t)(dPWMArrayValue * dPWMbrightnessCoef[PWMnum]);
+                break;
+
+            case LINEAR:
+                dFinalValue = (uint16_t)(dPWMArrayValue * dPWMArrayValue);
+                break;
+
+            case NORMAL:
+                dFinalValue = (uint16_t)(dPWMArrayValue * 255);
+                break;                
         }
-        else
-        {
-            dPWMdelay[PWMnum] = get_random_16bits(11);                
-            pwm_set_gpio_level(PWMnum, 0);
-            bPWMphase[PWMnum] = true;
+        pwm_set_gpio_level(PWMnum, dFinalValue);
+        ++dPWMidx[PWMnum];
+
+        // If we've reached end of array
+        if(!dPWMArrayValue)
+        {                
+            dPWMidx[PWMnum] = 0;  
+            setup_initial_values(PWMnum);
         }
     }
 }
 
 
-int main() {
-
-    // Tell the LED pin that the PWM is in charge of its value.
-    for(int myidx = 0; myidx < 32; myidx++)
-    {
-        dPWMdelay[myidx] = 0;
-    }
-    for(int myidx = 0; myidx < 32; myidx++)
-    {
-        bPWMphase[myidx] = false;
-    }
-    for(int myidx = 0; myidx < 32; myidx++)
-    {
-        dPWMidx[myidx] = 0;
-    }
+int main() {    
 
     for(int myidx = 0; myidx < sizeof(dPWMUsed); myidx++)
     {
@@ -99,6 +136,11 @@ int main() {
         pwm_init(slice_num, &config, true);
     }
 
+    for(int myidx = 0; myidx < sizeof(dPWMUsed); myidx++)
+    {
+        setup_initial_values(dPWMUsed[myidx]);
+    }
+
     while (1)
     {
         for(int myidx = 0; myidx < sizeof(dPWMUsed); myidx++)
@@ -106,7 +148,7 @@ int main() {
             setPWM(dPWMUsed[myidx]);
         }
         
-        sleep_us(STEP_DURATION);           
+        sleep_us(STEP_DURATION_US);           
         
     }        
 }
